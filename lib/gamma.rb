@@ -12,6 +12,7 @@ end
 
 require "gamma/version"
 require "gamma/table"
+require "gamma/filter"
 require "gamma/hook"
 require "gamma/script"
 require "gamma/script/row_script"

@@ -25,15 +25,16 @@ class Gamma::Importer::Replace < Gamma::Importer
     current_in_pid = 0
     while true do
       select_columns = columns.map { |c| "`#{c}`" }.join(",")
+      delta_columns = @table.delta_column.present? ? [primary_key, @table.delta_column].map { |c| "`#{c}`" }.join(",") : select_columns
       break unless select_columns.present?
 
       in_query = "SELECT #{select_columns} FROM #{@table.table_name} WHERE #{primary_key} > #{current_in_pid} ORDER BY #{primary_key} ASC LIMIT #{BATCH_SIZE}"
       logger.info(in_query) if ENV["DEBUG"]
-      in_records = @in_client.client.query(in_query).to_a
+      in_records = @in_client.client.query(in_query).map { |record| @table.record_value(record, type: :in) }
 
       break unless in_records.present?
 
-      out_records = exist_records(select_columns, primary_key, in_records.map { |v| v[primary_key] })
+      out_records = exist_records(delta_columns, primary_key, in_records.map { |v| v[primary_key] })
 
       in_records.map { |ir| [ir, out_records.find { |v| ir[primary_key] == v[primary_key] }] }.each do |in_record, out_record|
         if out_record.present?
@@ -49,10 +50,10 @@ class Gamma::Importer::Replace < Gamma::Importer
     logger.error("Sync Error #{@table.table_name} \n #{e}\n #{e.backtrace.join("\n")}".red)
   end
 
-  def exist_records(select_columns, primary_key, in_pids)
+  def exist_records(delta_columns, primary_key, in_pids)
     return [] unless in_pids.present?
 
-    query = "SELECT #{select_columns} FROM #{@table.table_name} WHERE #{primary_key} in (#{in_pids.join(",")})"
+    query = "SELECT #{delta_columns} FROM #{@table.table_name} WHERE #{primary_key} in (#{in_pids.join(",")})"
     @out_client.client.query(query).to_a
   end
 
@@ -98,27 +99,19 @@ class Gamma::Importer::Replace < Gamma::Importer
   end
 
   def insert_record_values(record, columns)
-    r = record
-    columns.map do |v|
-      c = if r[v].is_a?(Time)
-            r[v].strftime("%Y-%m-%d %H:%M:%S")
-          else
-            r[v]
-          end
-     "\"#{@out_client.client.escape(c.to_s)}\""
-    end.join(",")
+    columns.map { |column| escape_value(record[column]) }.join(',')
   end
 
   def update_record_values(record, columns)
-    r = record
-    columns.map do |v|
-      c = if r[v].is_a?(Time)
-            r[v].strftime("%Y-%m-%d %H:%M:%S")
-          else
-            r[v]
-          end
-      "`#{v}` = \"#{@out_client.client.escape(c.to_s)}\""
-    end.join(",")
+    columns.map { |column| "`#{column}` = #{escape_value(record[column])}" }.join(',')
+  end
+
+  def escape_value(value)
+    if value.is_a?(String) && value.encoding == Encoding::ASCII_8BIT
+      "x'#{value.unpack('H*').first}'"
+    else
+      "\"#{@out_client.client.escape(value.is_a?(Time) ? value.strftime("%Y-%m-%d %H:%M:%S") : value.to_s)}\""
+    end
   end
 
   def exec_query(query)
