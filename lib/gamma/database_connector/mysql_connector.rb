@@ -15,7 +15,8 @@ class Gamma::DatabaseConnector::MysqlConnector < Gamma::DatabaseConnector
       port: @config[:port] || DEFAULT_PORT,
       username: @config[:username],
       password: @config[:password] || "",
-      database: database_name
+      database: database_name,
+      **@config.slice(:socket, :encoding).symbolize_keys
     )
   end
 
@@ -25,7 +26,8 @@ class Gamma::DatabaseConnector::MysqlConnector < Gamma::DatabaseConnector
       port: @config[:port] || DEFAULT_PORT,
       username: @config[:username],
       password: @config[:password] || "",
-      database: "information_schema"
+      database: "information_schema",
+      **@config.slice(:socket, :encoding).symbolize_keys
     )
   end
 end
