@@ -4,9 +4,10 @@ class Gamma::Command::Dryrun < Gamma::Command
     # TODO: support postgres adapter
     @in_client = Gamma::DatabaseConnector::MysqlConnector.new(@database_settings.in_database)
     @out_client = Gamma::DatabaseConnector::MysqlConnector.new(@database_settings.out_database)
+    @filter_root_dir = opts[:filter_dir] || "."
     @hook_root_dir = opts[:hook_dir] || "."
     @syncdb = Gamma::SyncDatabase.new(opts[:sync_history] || "./history.json")
-    @data_parser = Gamma::Parser::DataParser.new(opts[:data], @hook_root_dir, @in_client, @out_client, apply: false)
+    @data_parser = Gamma::Parser::DataParser.new(opts[:data], @filter_root_dir, @hook_root_dir, @in_client, @out_client, apply: false)
   end
 
   def execute

@@ -1,8 +1,9 @@
 class Gamma::Parser::DataParser < Gamma::Parser
   DEFAULT_SYNC_MODE = "replace"
 
-  def initialize(data_yaml_path, hook_root_dir, in_client, out_client, apply: false)
+  def initialize(data_yaml_path, filter_root_dir, hook_root_dir, in_client, out_client, apply: false)
     @data_settings = YAML.load_file(data_yaml_path).map(&:with_indifferent_access)
+    @filter_root_dir = filter_root_dir
     @hook_root_dir = hook_root_dir
     @in_client = in_client
     @out_client = out_client
@@ -27,7 +28,8 @@ class Gamma::Parser::DataParser < Gamma::Parser
              end
     tables = tables.map do |t|
       t.sync_mode = data[:mode].presence || DEFAULT_SYNC_MODE
-      t.delta_column = data[:delta_column]
+      t.delta_column = data[:delta_column].present? && (t.in_exist_columns & t.out_exist_columns).include?(data[:delta_column]) ? data[:delta_column] : nil
+      t.filters = data[:filters].present? ? parse_filters(data[:filters], t) : []
       t.hooks = data[:hooks].present? ? parse_hooks(data[:hooks], t) : []
 
       t
@@ -85,46 +87,54 @@ class Gamma::Parser::DataParser < Gamma::Parser
     client.schema_client.query(query.strip_heredoc).to_a.map { |v| v["COLUMN_NAME"] }
   end
 
+  def parse_filters(filters, table)
+    parse_interceptors(:filter, filters, table)
+  end
+
   def parse_hooks(hooks, table)
-    hooks = hooks.is_a?(Array) ? hooks : [hooks]
-    hooks.map do |hook|
-      type = if hook[:row].present?
+    parse_interceptors(:hook, hooks, table)
+  end
+
+  def parse_interceptors(interceptor_type, interceptors, table)
+    interceptors = interceptors.is_a?(Array) ? interceptors : [interceptors]
+    interceptors.map do |interceptor|
+      type = if interceptor[:row].present?
                :row
-             elsif hook[:column].present?
+             elsif interceptor[:column].present?
                :column
              end
 
       if type == :row
-        options = hook[:row]
-        fail "Required scripts arguments. table: #{table.table_name}, hook_type: #{type}" unless options[:scripts].present?
+        options = interceptor[:row]
+        fail "Required scripts arguments. table: #{table.table_name}, #{interceptor_type}_type: #{type}" unless options[:scripts].present?
 
         Array(options[:scripts]).map do |script|
-          h = Gamma::Hook.new
-          h.hook_type = :row
+          h = Gamma.const_get(interceptor_type.to_s.camelize).new
+          h.send(:"#{interceptor_type}_type=", :row)
           h.column_name = nil
           h.script_path = script
-          h.root_dir = @hook_root_dir
+          h.root_dir = instance_variable_get(:"@#{interceptor_type}_root_dir")
           h.apply = @apply
           h
         end
       elsif type == :column
-        options = hook[:column]
-        fail "Required column name arguments. table: #{table.table_name}, hook_type: #{type}" unless options[:name].present?
-        fail "Required scripts arguments. table: #{table.table_name}, hook_type: #{type}" unless options[:scripts].present?
+        options = interceptor[:column]
+        fail "Required column name arguments. table: #{table.table_name}, #{interceptor_type}_type: #{type}" unless options[:name].present?
+        fail "Required scripts arguments. table: #{table.table_name}, #{interceptor_type}_type: #{type}" unless options[:scripts].present?
 
         column_names = Array(options[:name])
         scripts = Array(options[:scripts])
         column_names.product(scripts).map do |column_name, script|
-          h = Gamma::Hook.new
-          h.hook_type = :column
+          h = Gamma.const_get(interceptor_type.to_s.camelize).new
+          h.send(:"#{interceptor_type}_type=", :column)
           h.column_name = column_name
           h.script_path = script
-          h.root_dir = @hook_root_dir
+          h.root_dir = instance_variable_get(:"@#{interceptor_type}_root_dir")
           h.apply = @apply
           h
         end
       else
-        fail "Unknown Hook Type"
+        fail "Unknown #{interceptor_type.to_s.camelize} Type"
       end
     end.flatten.compact
   end
